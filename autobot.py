@@ -263,15 +263,15 @@ def update_strategy_weights():
 # ==================== BOT INITIALIZATION ====================
 if __name__ == "__main__":
     if not mt5.initialize(login=MT5_ACCOUNT, password=MT5_PASSWORD, server=MT5_SERVER):
-        print("❌ Failed to connect to MT5")
+        print(" Failed to connect to MT5")
         mt5.shutdown()
         exit()
     
-    print("\n🚀 Ultimate MT5 Trading Bot Activated")
-    print(f"💰 Demo Balance: ${ACCOUNT_BALANCE:,}")
-    print(f"📈 Strategies: 6 Adaptive Systems")
-    print(f"🌎 Markets: {', '.join(SYMBOLS)}")
-    print(f"⚖️ Risk: {RISK_PER_TRADE*100}% per trade | Max Daily Loss: {MAX_DAILY_LOSS*100}%")
+    print("\n Ultimate MT5 Trading Bot Activated")
+    print(f" Demo Balance: ${ACCOUNT_BALANCE:,}")
+    print(f" Strategies: 6 Adaptive Systems")
+    print(f" Markets: {', '.join(SYMBOLS)}")
+    print(f" Risk: {RISK_PER_TRADE*100}% per trade | Max Daily Loss: {MAX_DAILY_LOSS*100}%")
     
     while True:
         trading_cycle()
