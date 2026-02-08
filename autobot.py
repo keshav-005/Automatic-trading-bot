@@ -13,8 +13,8 @@ from collections import defaultdict
 import random
 
 # ==================== CONFIGURATION ====================
-MT5_ACCOUNT = 5035899068             # Your MT5 demo account number
-MT5_PASSWORD = "!7RqLzZn"    # MT5 demo password
+MT5_ACCOUNT =            # Your MT5 demo account number
+MT5_PASSWORD =  # MT5 demo password
 MT5_SERVER = "MetaQuotes-Demo"    # Demo server name
 
 ACCOUNT_BALANCE = 10000           # Virtual balance
@@ -29,8 +29,8 @@ SYMBOLS = [
 ]
 
 # ==================== API KEYS (YOUR KEYS INSERTED) ====================
-ALPHA_VANTAGE_KEY = "YS2OD2MMWQHR79NE"  # Your Alpha Vantage API key
-NEWS_API_KEY = "d912d2bbe3ea40a1890795b714f157eb"  # Your NewsAPI key
+ALPHA_VANTAGE_KEY = ""  # Your Alpha Vantage API key
+NEWS_API_KEY = ""  # Your NewsAPI key
 
 STRATEGY_WEIGHTS = {
     'ema_cross': 0.25,
