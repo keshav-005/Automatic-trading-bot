@@ -1,4 +1,4 @@
-# Automatic-trading-bot
+# Automatic-trading-bot by keshav-005
 It is a sophisticated algorithmic trading bot designed for MetaTrader that implements a multi-strategy approach with adaptive learning capabilities.
 
 Core Functionality
