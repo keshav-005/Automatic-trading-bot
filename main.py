@@ -14,7 +14,18 @@ import time
 import webbrowser
 from config import TradingConfig, default_config
 from core.engine import TradingEngine
-from dashboard.server import start_dashboard_server
+from dashboard.server import start_dashboard_server, DashboardRequestHandler, wsgi_app
+
+# =======================================================================
+# Vercel Cloud Serverless Entrypoints
+# When deploying to Vercel, the Python runtime looks for:
+# 1. 'handler' (inheriting from BaseHTTPRequestHandler)
+# 2. 'app' or 'application' (WSGI callable)
+# By exporting both, Vercel will immediately recognize and deploy the project!
+# =======================================================================
+handler = DashboardRequestHandler
+app = wsgi_app
+application = wsgi_app
 
 def print_header(mode: str):
     print("\n" + "=" * 60)
