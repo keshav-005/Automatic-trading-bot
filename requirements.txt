@@ -1,0 +1,8 @@
+# ApexQuant Dependencies
+# Pure Python 3.10+ compatible (including Python 3.12, 3.13, 3.14)
+
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Optional: MetaTrader 5 live execution bridge (Windows only)
+# MetaTrader5>=5.0.0; platform_system == "Windows"
