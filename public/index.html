@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trading Bot Dashboard - CSE Capstone Project</title>
+  <style>
+    /* Clean developer dark theme - simple, high contrast, readable */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #0f141c;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.4;
+      padding: 16px 20px;
+    }
+
+    /* Header */
+    .top-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #232c3d;
+      margin-bottom: 16px;
+    }
+
+    .header-left h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #ffffff;
+      letter-spacing: -0.3px;
+    }
+
+    .header-left p {
+      color: #8899aa;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .header-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .status-tag {
+      padding: 4px 10px;
+      background: #182234;
+      border: 1px solid #2e4161;
+      color: #60a5fa;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      font-family: monospace;
+    }
+
+    button {
+      background: #1e293b;
+      color: #f1f5f9;
+      border: 1px solid #334155;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button:hover {
+      background: #283548;
+      border-color: #475569;
+    }
+
+    button.btn-blue {
+      background: #2563eb;
+      border-color: #1d4ed8;
+      color: #ffffff;
+    }
+
+    button.btn-blue:hover {
+      background: #1d4ed8;
+    }
+
+    /* Metric Summary Bar */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .metric-card {
+      background: #151c28;
+      border: 1px solid #232c3d;
+      border-radius: 6px;
+      padding: 12px 14px;
+    }
+
+    .metric-label {
+      color: #8899aa;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .metric-value {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 4px 0 2px 0;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    .metric-sub {
+      color: #64748b;
+      font-size: 11px;
+    }
+
+    .val-green { color: #22c55e; }
+    .val-red { color: #ef4444; }
+    .val-blue { color: #38bdf8; }
+
+    /* Layout Grids */
+    .grid-2col {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .panel {
+      background: #151c28;
+      border: 1px solid #232c3d;
+      border-radius: 6px;
+      padding: 14px;
+    }
+
+    .panel-header {
+      font-size: 13px;
+      font-weight: 600;
+      color: #cbd5e1;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Canvas Chart */
+    .chart-box {
+      width: 100%;
+      height: 240px;
+      position: relative;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Strategy Table in Right Panel */
+    .strategy-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .strategy-table td {
+      padding: 6px 4px;
+      border-bottom: 1px solid #1a2230;
+    }
+
+    .strategy-name {
+      color: #e2e8f0;
+      font-weight: 500;
+    }
+
+    .bar-bg {
+      background: #202b3d;
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 3px;
+      width: 100%;
+    }
+
+    .bar-val {
+      background: #38bdf8;
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    /* Tables */
+    .tables-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: monospace;
+      font-size: 11px;
+    }
+
+    table.data-table th {
+      text-align: left;
+      padding: 6px 8px;
+      background: #111722;
+      color: #7d8c9e;
+      border-bottom: 1px solid #232c3d;
+      font-weight: 500;
+    }
+
+    table.data-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #192230;
+      color: #cbd5e1;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: bold;
+    }
+
+    .badge-buy { background: #064e3b; color: #4ade80; }
+    .badge-sell { background: #7f1d1d; color: #f87171; }
+    .badge-gray { background: #1e293b; color: #94a3b8; }
+
+    /* Terminal Console */
+    .log-terminal {
+      background: #0b0f17;
+      border: 1px solid #1c2433;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 10px;
+      height: 140px;
+      overflow-y: auto;
+      color: #94a3b8;
+    }
+
+    .log-line {
+      margin-bottom: 3px;
+      white-space: pre-wrap;
+    }
+
+    .log-time { color: #526173; }
+    .log-trade { color: #22c55e; }
+    .log-order { color: #60a5fa; }
+    .log-risk { color: #f59e0b; }
+    .log-error { color: #ef4444; }
+
+    @media (max-width: 900px) {
+      .grid-2col, .tables-split { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="top-header">
+    <div class="header-left">
+      <h1>Trading Bot Dashboard</h1>
+      <p>Multi-Strategy Backtesting & Paper Trading Engine | CSE Capstone Project</p>
+    </div>
+    <div class="header-controls">
+      <span class="status-tag">Broker: Paper Trading (Local)</span>
+      <button id="btn-step" title="Advance simulation by 5 bars">Step 5 Cycles</button>
+      <button id="btn-backtest" class="btn-blue" title="Run backtest on historical data">Run Backtest</button>
+    </div>
+  </div>
+
+  <!-- Key Metrics Row -->
+  <div class="metrics-row">
+    <div class="metric-card">
+      <div class="metric-label">Account Equity</div>
+      <div id="stat-equity" class="metric-value val-blue">$10,000.00</div>
+      <div id="stat-balance" class="metric-sub">Balance: $10,000.00</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Realized PnL</div>
+      <div id="stat-pnl" class="metric-value val-green">+$0.00</div>
+      <div id="stat-roi" class="metric-sub">ROI: 0.00%</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Win Rate</div>
+      <div id="stat-winrate" class="metric-value">0.0%</div>
+      <div id="stat-trades" class="metric-sub">0 trades completed</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Sharpe Ratio</div>
+      <div id="stat-sharpe" class="metric-value">0.00</div>
+      <div id="stat-sortino" class="metric-sub">Sortino: 0.00</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Max Drawdown</div>
+      <div id="stat-mdd" class="metric-value val-green">0.00%</div>
+      <div id="stat-circuit" class="metric-sub">Risk Status: Normal</div>
+    </div>
+  </div>
+
+  <!-- Main Section: Equity Graph and Strategy Weights -->
+  <div class="grid-2col">
+    <!-- Chart Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Portfolio Equity Trajectory</span>
+        <span style="font-size: 11px; color: #64748b; font-weight: normal;">Updated every cycle</span>
+      </div>
+      <div class="chart-box">
+        <canvas id="equity-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Strategy Weights Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Strategy Weights (Adaptive)</span>
+        <span style="font-size: 11px; color: #64748b; font-weight: normal;">Dynamic Bayesian</span>
+      </div>
+      <table class="strategy-table">
+        <tbody id="strategy-tbody">
+          <!-- Populated via JS -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tables Section: Open Positions and Recent Trades -->
+  <div class="tables-split">
+    <!-- Open Positions -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Active Open Positions</span>
+        <span id="open-count" style="font-size: 11px; color: #64748b; font-weight: normal;">0 open</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Type</th>
+            <th>Lots</th>
+            <th>Entry</th>
+            <th>Current</th>
+            <th>SL</th>
+            <th>TP</th>
+            <th>PnL</th>
+          </tr>
+        </thead>
+        <tbody id="positions-tbody">
+          <tr><td colspan="8" style="text-align: center; color: #526173;">No open positions</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Trade History -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Closed Trade History</span>
+        <span style="font-size: 11px; color: #64748b; font-weight: normal;">Latest 10 trades</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Symbol</th>
+            <th>Type</th>
+            <th>Lots</th>
+            <th>Exit</th>
+            <th>Trigger</th>
+            <th>PnL</th>
+          </tr>
+        </thead>
+        <tbody id="trades-tbody">
+          <tr><td colspan="7" style="text-align: center; color: #526173;">No closed trades yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Terminal Logs Panel -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>System Execution Logs</span>
+      <span style="font-size: 11px; color: #64748b; font-weight: normal;">Live output</span>
+    </div>
+    <div id="terminal-logs" class="log-terminal">
+      <div class="log-line"><span class="log-time">[00:00:00]</span> Engine initialized. PaperBroker active. Waiting for ticks...</div>
+    </div>
+  </div>
+
+  <script>
+    // Clean, direct JS logic without heavy frameworks
+    let equityPoints = [10000];
+    const canvas = document.getElementById('equity-chart');
+    const ctx = canvas.getContext('2d');
+
+    function resizeChart() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+      drawChart();
+    }
+    window.addEventListener('resize', resizeChart);
+
+    // Simple, clean canvas line chart with price labels
+    function drawChart() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (equityPoints.length < 2) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '12px monospace';
+        ctx.fillText('Accumulating equity data...', 16, h / 2);
+        return;
+      }
+
+      const minVal = Math.min(...equityPoints) * 0.999;
+      const maxVal = Math.max(...equityPoints) * 1.001;
+      const range = (maxVal - minVal) || 1;
+
+      // Draw horizontal grid lines
+      ctx.strokeStyle = '#1a2332';
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 4; i++) {
+        const y = (h / 5) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+
+        // Price label on right
+        const priceLabel = (maxVal - (i / 5) * range).toFixed(1);
+        ctx.fillStyle = '#475569';
+        ctx.font = '10px monospace';
+        ctx.fillText('$' + priceLabel, w - 55, y - 4);
+      }
+
+      // Map points
+      const pts = equityPoints.map((val, idx) => {
+        const x = (idx / (equityPoints.length - 1)) * (w - 60);
+        const y = h - ((val - minVal) / range) * (h - 30) - 15;
+        return { x, y };
+      });
+
+      // Line
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.strokeStyle = equityPoints[equityPoints.length - 1] >= 10000 ? '#22c55e' : '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Baseline reference at $10,000
+      if (minVal <= 10000 && maxVal >= 10000) {
+        const baseY = h - ((10000 - minVal) / range) * (h - 30) - 15;
+        ctx.beginPath();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = '#475569';
+        ctx.moveTo(0, baseY);
+        ctx.lineTo(w - 60, baseY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    async function refreshDashboard() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. Metric Cards
+        document.getElementById('stat-equity').textContent = '$' + data.equity.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        document.getElementById('stat-balance').textContent = 'Balance: $' + data.balance.toLocaleString(undefined, {minimumFractionDigits: 2});
+        
+        const m = data.metrics || {};
+        const pnl = m.net_pnl || 0;
+        const pnlEl = document.getElementById('stat-pnl');
+        pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+        pnlEl.className = 'metric-value ' + (pnl >= 0 ? 'val-green' : 'val-red');
+
+        document.getElementById('stat-roi').textContent = 'ROI: ' + (m.roi_pct || 0) + '%';
+        document.getElementById('stat-winrate').textContent = (m.win_rate_pct || 0) + '%';
+        document.getElementById('stat-trades').textContent = (m.winning_trades || 0) + 'W / ' + (m.losing_trades || 0) + 'L (PF: ' + (m.profit_factor || 0) + ')';
+        document.getElementById('stat-sharpe').textContent = (m.sharpe_ratio || 0).toFixed(2);
+        document.getElementById('stat-sortino').textContent = 'Sortino: ' + (m.sortino_ratio || 0).toFixed(2);
+        
+        const mdd = m.max_drawdown_pct || 0;
+        const mddEl = document.getElementById('stat-mdd');
+        mddEl.textContent = mdd.toFixed(2) + '%';
+        mddEl.className = 'metric-value ' + (mdd > 4.0 ? 'val-red' : 'val-green');
+        document.getElementById('stat-circuit').textContent = data.circuit_breaker ? 'STOPPED (Drawdown Limit Hit)' : 'Risk Status: Normal';
+
+        // 2. Update Equity Line
+        equityPoints.push(data.equity);
+        if (equityPoints.length > 70) equityPoints.shift();
+        drawChart();
+
+        // 3. Strategy Weights Table
+        const stratTbody = document.getElementById('strategy-tbody');
+        const stratNames = {
+          'ema_cross': 'EMA 9/21 Crossover',
+          'rsi_reversion': 'RSI Mean Reversion',
+          'macd_momentum': 'MACD Momentum',
+          'bollinger_squeeze': 'Bollinger Squeeze',
+          'volume_anomaly': 'Volume Surge',
+          'market_sentiment': 'News Sentiment'
+        };
+
+        stratTbody.innerHTML = '';
+        for (const [key, weight] of Object.entries(data.strategy_weights || {})) {
+          const pct = (weight * 100).toFixed(1);
+          const name = stratNames[key] || key;
+          stratTbody.innerHTML += `
+            <tr>
+              <td style="width: 55%;">
+                <div class="strategy-name">${name}</div>
+                <div class="bar-bg"><div class="bar-val" style="width: ${pct}%;"></div></div>
+              </td>
+              <td style="text-align: right; font-family: monospace; color: #38bdf8;">${pct}%</td>
+            </tr>
+          `;
+        }
+
+        // 4. Open Positions
+        const posTbody = document.getElementById('positions-tbody');
+        const openPos = data.open_positions || [];
+        document.getElementById('open-count').textContent = openPos.length + ' open';
+
+        if (openPos.length > 0) {
+          posTbody.innerHTML = openPos.map(p => `
+            <tr>
+              <td><strong>${p.symbol}</strong></td>
+              <td><span class="badge ${p.action === 'BUY' ? 'badge-buy' : 'badge-sell'}">${p.action}</span></td>
+              <td>${p.lots.toFixed(2)}</td>
+              <td>${p.entry_price.toFixed(4)}</td>
+              <td>${p.current_price.toFixed(4)}</td>
+              <td>${p.stop_loss.toFixed(4)}</td>
+              <td>${p.take_profit.toFixed(4)}</td>
+              <td class="${p.unrealized_pnl >= 0 ? 'val-green' : 'val-red'}" style="font-weight: bold;">
+                ${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(2)}
+              </td>
+            </tr>
+          `).join('');
+        } else {
+          posTbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #526173;">No open positions</td></tr>';
+        }
+
+        // 5. Closed Trades
+        const tradesTbody = document.getElementById('trades-tbody');
+        const closed = data.closed_trades || [];
+        if (closed.length > 0) {
+          tradesTbody.innerHTML = closed.slice(0, 10).map(t => `
+            <tr>
+              <td style="color: #64748b;">${t.close_time}</td>
+              <td><strong>${t.symbol}</strong></td>
+              <td><span class="badge ${t.action === 'BUY' ? 'badge-buy' : 'badge-sell'}">${t.action}</span></td>
+              <td>${t.lots.toFixed(2)}</td>
+              <td>${t.exit_price.toFixed(4)}</td>
+              <td><span class="badge badge-gray">${t.reason}</span></td>
+              <td class="${t.pnl >= 0 ? 'val-green' : 'val-red'}" style="font-weight: bold;">
+                ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        // 6. Logs
+        const logsBox = document.getElementById('terminal-logs');
+        if (data.logs && data.logs.length > 0) {
+          logsBox.innerHTML = data.logs.map(log => {
+            let cls = '';
+            if (log.level === 'trade') cls = 'log-trade';
+            else if (log.level === 'order') cls = 'log-order';
+            else if (log.level === 'risk') cls = 'log-risk';
+            else if (log.level === 'error') cls = 'log-error';
+            return `<div class="log-line"><span class="log-time">[${log.time}]</span> <span class="${cls}">[${log.level.toUpperCase()}]</span> ${log.message}</div>`;
+          }).join('');
+          logsBox.scrollTop = logsBox.scrollHeight;
+        }
+
+      } catch (e) {
+        console.error('Error fetching dashboard status:', e);
+      }
+    }
+
+    // Button interactions
+    document.getElementById('btn-step').addEventListener('click', async () => {
+      await fetch('/api/step', { method: 'POST' });
+      refreshDashboard();
+    });
+
+    document.getElementById('btn-backtest').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-backtest');
+      btn.disabled = true;
+      btn.textContent = 'Simulating...';
+      try {
+        const res = await fetch('/api/backtest', { method: 'POST' });
+        const rep = await res.json();
+        alert(`Backtest Finished!\n\nTrades: ${rep.total_trades}\nWin Rate: ${rep.win_rate_pct}%\nSharpe Ratio: ${rep.sharpe_ratio}\nMax Drawdown: ${rep.max_drawdown_pct}%\nNet PnL: $${rep.net_pnl}`);
+        refreshDashboard();
+      } catch (err) {
+        alert('Backtest failed: ' + err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Backtest';
+      }
+    });
+
+    // Start
+    setTimeout(() => {
+      resizeChart();
+      refreshDashboard();
+    }, 100);
+
+    // Refresh every 1.5 seconds
+    setInterval(refreshDashboard, 1500);
+  </script>
+</body>
+</html>

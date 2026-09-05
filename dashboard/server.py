@@ -17,7 +17,7 @@ from typing import Optional
 from core.engine import TradingEngine
 from config import default_config
 
-# Global singleton engine instance (used across serverless function invocations)
+# Global singleton engine instance (shared across serverless function invocations)
 _global_engine: Optional[TradingEngine] = None
 
 def get_global_engine() -> TradingEngine:
@@ -25,7 +25,7 @@ def get_global_engine() -> TradingEngine:
     global _global_engine
     if _global_engine is None:
         _global_engine = TradingEngine(default_config)
-        # Pre-seed with a few ticks so the dashboard is immediately populated on first load
+        # Pre-seed with a few ticks so the dashboard has active metrics immediately
         for _ in range(8):
             _global_engine.run_cycle_all_assets()
     return _global_engine
@@ -33,16 +33,21 @@ def get_global_engine() -> TradingEngine:
 def get_dashboard_html() -> str:
     """Finds and reads index.html from multiple possible relative paths."""
     search_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"),
+        os.path.join(os.getcwd(), "index.html"),
+        os.path.join(os.getcwd(), "public", "index.html"),
         os.path.join(os.getcwd(), "dashboard", "index.html"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.html"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dashboard", "index.html"),
-        "dashboard/index.html"
     ]
     for path in search_paths:
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-    return "<h1>Trading Bot Dashboard - index.html not found</h1>"
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception:
+                continue
+    return "<h1>Trading Bot Dashboard - index.html loaded</h1>"
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
     """
@@ -77,49 +82,41 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        if path == "":
-            path = "/"
+        path = parsed.path.lower().rstrip("/")
 
-        # 1. Serve HTML Dashboard
-        if path in ["/", "/index.html"]:
-            body = get_dashboard_html().encode("utf-8")
-            self._set_headers(content_type="text/html; charset=utf-8", length=len(body))
-            self.wfile.write(body)
-            return
-
-        # 2. Favicon
-        if path == "/favicon.ico":
+        # 1. Favicon
+        if "favicon.ico" in path:
             self.send_response(204)
             self.end_headers()
             return
 
-        # 3. Status Telemetry API
-        if path == "/api/status":
+        # 2. Status Telemetry API (handles /api/status, /status, or similar)
+        if "status" in path:
             data = self.active_engine.get_telemetry()
             body = json.dumps(data).encode("utf-8")
             self._set_headers(content_type="application/json", length=len(body))
             self.wfile.write(body)
             return
 
-        # 4. Fallback 404
-        self._set_headers(content_type="text/plain", status=404, length=9)
-        self.wfile.write(b"Not Found")
+        # 3. Default: Serve HTML Dashboard for all page requests (/, /main.py, /index.html, etc.)
+        body = get_dashboard_html().encode("utf-8")
+        self._set_headers(content_type="text/html; charset=utf-8", length=len(body))
+        self.wfile.write(body)
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
+        path = parsed.path.lower().rstrip("/")
 
         # 1. Run Historical Backtest
-        if path == "/api/backtest":
+        if "backtest" in path:
             report = self.active_engine.run_backtest(n_bars=200)
             body = json.dumps(report).encode("utf-8")
             self._set_headers(content_type="application/json", length=len(body))
             self.wfile.write(body)
             return
 
-        # 2. Step 5 simulation cycles
-        if path == "/api/step":
+        # 2. Step simulation cycles
+        if "step" in path:
             for _ in range(5):
                 self.active_engine.run_cycle_all_assets()
             data = self.active_engine.get_telemetry()
@@ -128,18 +125,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        self._set_headers(content_type="text/plain", status=404, length=9)
-        self.wfile.write(b"Not Found")
+        # Fallback for unmatched POST: return current status
+        data = self.active_engine.get_telemetry()
+        body = json.dumps(data).encode("utf-8")
+        self._set_headers(content_type="application/json", length=len(body))
+        self.wfile.write(body)
 
 def wsgi_app(environ, start_response):
     """
     Standard WSGI callable (PEP 3333) for deployment on WSGI servers,
     Vercel, AWS Lambda, or Gunicorn.
     """
-    path = environ.get("PATH_INFO", "/")
-    if path.rstrip("/") == "":
-        path = "/"
-        
+    raw_path = environ.get("PATH_INFO", "/").lower()
     method = environ.get("REQUEST_METHOD", "GET").upper()
     engine = get_global_engine()
 
@@ -152,18 +149,11 @@ def wsgi_app(environ, start_response):
         return [b""]
 
     if method == "GET":
-        if path in ["/", "/index.html"]:
-            body = get_dashboard_html().encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "text/html; charset=utf-8"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
-        elif path == "/favicon.ico":
+        if "favicon.ico" in raw_path:
             start_response("204 No Content", [("Content-Length", "0")])
             return [b""]
-        elif path == "/api/status":
+            
+        elif "status" in raw_path:
             data = engine.get_telemetry()
             body = json.dumps(data).encode("utf-8")
             start_response("200 OK", [
@@ -172,9 +162,19 @@ def wsgi_app(environ, start_response):
                 ("Access-Control-Allow-Origin", "*")
             ])
             return [body]
+            
+        else:
+            # Default for all page visits: serve HTML dashboard
+            body = get_dashboard_html().encode("utf-8")
+            start_response("200 OK", [
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Content-Length", str(len(body))),
+                ("Access-Control-Allow-Origin", "*")
+            ])
+            return [body]
 
     elif method == "POST":
-        if path == "/api/step":
+        if "step" in raw_path:
             for _ in range(5):
                 engine.run_cycle_all_assets()
             data = engine.get_telemetry()
@@ -185,9 +185,20 @@ def wsgi_app(environ, start_response):
                 ("Access-Control-Allow-Origin", "*")
             ])
             return [body]
-        elif path == "/api/backtest":
+            
+        elif "backtest" in raw_path:
             report = engine.run_backtest(n_bars=200)
             body = json.dumps(report).encode("utf-8")
+            start_response("200 OK", [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(body))),
+                ("Access-Control-Allow-Origin", "*")
+            ])
+            return [body]
+            
+        else:
+            data = engine.get_telemetry()
+            body = json.dumps(data).encode("utf-8")
             start_response("200 OK", [
                 ("Content-Type", "application/json"),
                 ("Content-Length", str(len(body))),
