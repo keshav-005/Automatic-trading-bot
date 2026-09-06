@@ -1,10 +1,9 @@
 """
-Web Dashboard & Serverless API Server
-Author: Computer Science Student Project
+Local development HTTP server and Vercel WSGI adapter.
 
-Provides:
-1. Local multithreaded HTTP server (for running locally via python main.py or run_demo.bat)
-2. WSGI 'app' and BaseHTTPRequestHandler 'handler' (for cloud serverless deployments like Vercel)
+Provides two modes:
+1. ThreadingHTTPServer — used when running locally via `python main.py`.
+2. wsgi_app / handler — the interface Vercel expects from Python serverless functions.
 """
 
 import json
@@ -17,28 +16,27 @@ from typing import Optional
 from core.engine import TradingEngine
 from config import default_config
 
-# Global singleton engine instance (shared across serverless function invocations)
+# Shared engine instance — persists across requests within a single process.
+# On Vercel each invocation is a cold start, so this is effectively per-request.
 _global_engine: Optional[TradingEngine] = None
 
+
 def get_global_engine() -> TradingEngine:
-    """Returns a shared TradingEngine instance, pre-seeded with initial simulation data."""
+    """Return the shared engine, initializing it on first call with a warm-up run."""
     global _global_engine
     if _global_engine is None:
         _global_engine = TradingEngine(default_config)
-        # Pre-seed with a few ticks so the dashboard has active metrics immediately
         for _ in range(8):
             _global_engine.run_cycle_all_assets()
     return _global_engine
 
+
 def get_dashboard_html() -> str:
-    """Finds and reads index.html from multiple possible relative paths."""
+    """Locate and return index.html, searching several candidate paths."""
     search_paths = [
         os.path.join(os.getcwd(), "index.html"),
         os.path.join(os.getcwd(), "public", "index.html"),
-        os.path.join(os.getcwd(), "dashboard", "index.html"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.html"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dashboard", "index.html"),
     ]
     for path in search_paths:
         if os.path.exists(path):
@@ -47,25 +45,18 @@ def get_dashboard_html() -> str:
                     return f.read()
             except Exception:
                 continue
-    return "<h1>Trading Bot Dashboard - index.html loaded</h1>"
+    return "<h1>Trading Dashboard — index.html not found</h1>"
+
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
-    """
-    HTTP Request Handler compatible with both local ThreadingHTTPServer
-    and Vercel's Serverless Python runtime.
-    """
     engine: Optional[TradingEngine] = None
 
     @property
     def active_engine(self) -> TradingEngine:
-        """Returns the configured engine or falls back to the shared global singleton."""
-        if self.engine is not None:
-            return self.engine
-        return get_global_engine()
+        return self.engine if self.engine is not None else get_global_engine()
 
     def log_message(self, format, *args):
-        # Silence standard terminal request logging noise
-        pass
+        pass  # suppress default access log noise
 
     def _set_headers(self, content_type: str = "application/json", status: int = 200, length: Optional[int] = None):
         self.send_response(status)
@@ -85,49 +76,43 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path.lower().rstrip("/")
         query = parse_qs(parsed.query)
 
-        # 1. Favicon
         if "favicon.ico" in path:
             self.send_response(204)
             self.end_headers()
             return
 
-        # 2. Status Telemetry API
         if "status" in path:
             tick = query.get("tick", ["1"])[0]
             if tick != "0":
                 self.active_engine.run_cycle_all_assets()
-            data = self.active_engine.get_telemetry()
-            body = json.dumps(data).encode("utf-8")
-            self._set_headers(content_type="application/json", length=len(body))
+            body = json.dumps(self.active_engine.get_telemetry()).encode("utf-8")
+            self._set_headers(length=len(body))
             self.wfile.write(body)
             return
 
-        # 3. Backtest API (support GET)
         if "backtest" in path:
-            bars_param = query.get("bars", ["200"])[0]
             try:
-                n_bars = max(30, min(500, int(bars_param)))
-            except ValueError:
+                n_bars = max(30, min(500, int(query.get("bars", ["200"])[0])))
+            except (ValueError, IndexError):
                 n_bars = 200
             report = self.active_engine.run_backtest(n_bars=n_bars)
             report["ok"] = True
             body = json.dumps(report).encode("utf-8")
-            self._set_headers(content_type="application/json", length=len(body))
+            self._set_headers(length=len(body))
             self.wfile.write(body)
             return
 
-        # 4. Step Simulation API (support GET)
         if "step" in path:
             for _ in range(5):
                 self.active_engine.run_cycle_all_assets()
             data = self.active_engine.get_telemetry()
             data["ok"] = True
             body = json.dumps(data).encode("utf-8")
-            self._set_headers(content_type="application/json", length=len(body))
+            self._set_headers(length=len(body))
             self.wfile.write(body)
             return
 
-        # 5. Default: Serve HTML Dashboard for all page requests
+        # Default: serve the dashboard HTML
         body = get_dashboard_html().encode("utf-8")
         self._set_headers(content_type="text/html; charset=utf-8", length=len(body))
         self.wfile.write(body)
@@ -137,32 +122,28 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path.lower().rstrip("/")
         query = parse_qs(parsed.query)
 
-        # 1. Run Historical Backtest
         if "backtest" in path:
-            bars_param = query.get("bars", ["200"])[0]
             try:
-                n_bars = max(30, min(500, int(bars_param)))
-            except ValueError:
+                n_bars = max(30, min(500, int(query.get("bars", ["200"])[0])))
+            except (ValueError, IndexError):
                 n_bars = 200
             report = self.active_engine.run_backtest(n_bars=n_bars)
             report["ok"] = True
             body = json.dumps(report).encode("utf-8")
-            self._set_headers(content_type="application/json", length=len(body))
+            self._set_headers(length=len(body))
             self.wfile.write(body)
             return
 
-        # 2. Step simulation cycles
         if "step" in path:
             for _ in range(5):
                 self.active_engine.run_cycle_all_assets()
             data = self.active_engine.get_telemetry()
             data["ok"] = True
             body = json.dumps(data).encode("utf-8")
-            self._set_headers(content_type="application/json", length=len(body))
+            self._set_headers(length=len(body))
             self.wfile.write(body)
             return
 
-        # 3. Reset simulation
         if "reset" in path:
             global _global_engine
             _global_engine = TradingEngine(default_config)
@@ -171,112 +152,87 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             data = _global_engine.get_telemetry()
             data["ok"] = True
             body = json.dumps(data).encode("utf-8")
-            self._set_headers(content_type="application/json", length=len(body))
+            self._set_headers(length=len(body))
             self.wfile.write(body)
             return
 
-        # Fallback for unmatched POST: return current status
-        data = self.active_engine.get_telemetry()
-        body = json.dumps(data).encode("utf-8")
-        self._set_headers(content_type="application/json", length=len(body))
+        # Fallback: return current state
+        body = json.dumps(self.active_engine.get_telemetry()).encode("utf-8")
+        self._set_headers(length=len(body))
         self.wfile.write(body)
 
+
 def wsgi_app(environ, start_response):
-    """
-    Standard WSGI callable (PEP 3333) for deployment on WSGI servers,
-    Vercel, AWS Lambda, or Gunicorn.
-    """
+    """WSGI entry point for Vercel, Gunicorn, or any PEP-3333 compatible server."""
     raw_path = environ.get("PATH_INFO", "/").lower()
     method = environ.get("REQUEST_METHOD", "GET").upper()
-    query_str = environ.get("QUERY_STRING", "")
-    query = parse_qs(query_str)
+    query = parse_qs(environ.get("QUERY_STRING", ""))
     engine = get_global_engine()
 
+    cors_headers = [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+        ("Access-Control-Allow-Headers", "Content-Type"),
+    ]
+
     if method == "OPTIONS":
-        start_response("204 No Content", [
-            ("Access-Control-Allow-Origin", "*"),
-            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
-            ("Access-Control-Allow-Headers", "Content-Type"),
-        ])
+        start_response("204 No Content", cors_headers)
         return [b""]
 
-    if method in ("GET", "POST"):
-        if "favicon.ico" in raw_path:
-            start_response("204 No Content", [("Content-Length", "0")])
-            return [b""]
-            
-        elif "status" in raw_path:
-            tick = query.get("tick", ["1"])[0]
-            if tick != "0":
-                engine.run_cycle_all_assets()
-            data = engine.get_telemetry()
-            body = json.dumps(data).encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "application/json"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
+    if "favicon.ico" in raw_path:
+        start_response("204 No Content", [("Content-Length", "0")])
+        return [b""]
 
-        elif "backtest" in raw_path:
-            bars_param = query.get("bars", ["200"])[0]
-            try:
-                n_bars = max(30, min(500, int(bars_param)))
-            except ValueError:
-                n_bars = 200
-            report = engine.run_backtest(n_bars=n_bars)
-            report["ok"] = True
-            body = json.dumps(report).encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "application/json"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
+    if "status" in raw_path:
+        tick = query.get("tick", ["1"])[0]
+        if tick != "0":
+            engine.run_cycle_all_assets()
+        body = json.dumps(engine.get_telemetry()).encode("utf-8")
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(body)))] + cors_headers)
+        return [body]
 
-        elif "step" in raw_path:
-            for _ in range(5):
-                engine.run_cycle_all_assets()
-            data = engine.get_telemetry()
-            data["ok"] = True
-            body = json.dumps(data).encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "application/json"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
+    if "backtest" in raw_path:
+        try:
+            n_bars = max(30, min(500, int(query.get("bars", ["200"])[0])))
+        except (ValueError, IndexError):
+            n_bars = 200
+        report = engine.run_backtest(n_bars=n_bars)
+        report["ok"] = True
+        body = json.dumps(report).encode("utf-8")
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(body)))] + cors_headers)
+        return [body]
 
-        elif "reset" in raw_path:
-            global _global_engine
-            _global_engine = TradingEngine(default_config)
-            for _ in range(5):
-                _global_engine.run_cycle_all_assets()
-            data = _global_engine.get_telemetry()
-            data["ok"] = True
-            body = json.dumps(data).encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "application/json"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
+    if "step" in raw_path:
+        for _ in range(5):
+            engine.run_cycle_all_assets()
+        data = engine.get_telemetry()
+        data["ok"] = True
+        body = json.dumps(data).encode("utf-8")
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(body)))] + cors_headers)
+        return [body]
 
-        elif method == "GET":
-            # Default for all page visits: serve HTML dashboard
-            body = get_dashboard_html().encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "text/html; charset=utf-8"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
+    if "reset" in raw_path:
+        global _global_engine
+        _global_engine = TradingEngine(default_config)
+        for _ in range(5):
+            _global_engine.run_cycle_all_assets()
+        data = _global_engine.get_telemetry()
+        data["ok"] = True
+        body = json.dumps(data).encode("utf-8")
+        start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(body)))] + cors_headers)
+        return [body]
+
+    if method == "GET":
+        body = get_dashboard_html().encode("utf-8")
+        start_response("200 OK", [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body)))])
+        return [body]
 
     start_response("404 Not Found", [("Content-Type", "text/plain")])
     return [b"Not Found"]
 
+
 def start_dashboard_server(engine: TradingEngine, host: str = "0.0.0.0", port: int = 8080) -> ThreadingHTTPServer:
-    """Initializes and starts a local multithreaded HTTP server."""
+    """Start a local multithreaded HTTP server in a background daemon thread."""
     DashboardRequestHandler.engine = engine
     server = ThreadingHTTPServer((host, port), DashboardRequestHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

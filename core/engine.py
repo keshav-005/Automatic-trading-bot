@@ -1,13 +1,8 @@
 """
-Core Trading Engine
-Author: Computer Science Student Project
+Core trading engine — coordinates data, signals, risk, and execution.
 
-The TradingEngine class coordinates all system components:
-DataFeed -> StrategyEnsemble -> RiskManager -> Broker -> Analytics
-
-It can execute:
-1. Historical Backtests (simulates past candles bar-by-bar to test strategy profitability).
-2. Live Paper Trading (streams real-time ticks, manages open positions, and updates dashboard).
+Pipeline per cycle:
+    MarketDataFeed → StrategyEnsemble → RiskManager → Broker → Analytics
 """
 
 import time
@@ -24,23 +19,20 @@ from execution.paper_broker import PaperBroker
 from execution.mt5_broker import MT5Broker
 from analytics.metrics import PerformanceAnalytics
 
+
 class TradingEngine:
     def __init__(self, config: Optional[TradingConfig] = None):
         self.config = config or default_config
-        
-        # 1. Initialize market data feed
+
         self.feed = MarketDataFeed(seed=42)
-        
-        # 2. Initialize strategy ensemble with dynamic weights
+
         self.ensemble = StrategyEnsemble(
             initial_weights=self.config.strategies.weights.copy(),
             adx_threshold=self.config.strategies.adx_trend_threshold
         )
-        
-        # 3. Initialize risk manager
+
         self.risk_manager = RiskManager(self.config.risk, self.config.assets)
-        
-        # 4. Initialize execution broker (defaults to PaperBroker for zero-setup evaluation)
+
         if self.config.execution_mode == 'mt5':
             self.broker: BaseBroker = MT5Broker(
                 account=self.config.mt5_account,
@@ -52,7 +44,7 @@ class TradingEngine:
                 initial_balance=self.config.risk.account_balance,
                 assets=self.config.assets
             )
-            
+
         self.is_running = False
         self.cycle_count = 0
         self.latest_signals: Dict[str, Dict] = {}
@@ -60,7 +52,7 @@ class TradingEngine:
         self._lock = threading.Lock()
 
     def log_event(self, level: str, message: str, metadata: Optional[Dict] = None):
-        """Adds a timestamped log entry to the in-memory telemetry buffer."""
+        """Append a timestamped log entry and print it to stdout."""
         timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
         entry = {
             'time': timestamp,
@@ -70,45 +62,38 @@ class TradingEngine:
         }
         with self._lock:
             self.event_logs.append(entry)
-            # Keep latest 100 log lines to avoid unbounded memory growth
+            # Keep buffer bounded to avoid unbounded memory growth
             if len(self.event_logs) > 100:
                 self.event_logs.pop(0)
         print(f"[{timestamp}] [{level.upper()}] {message}")
 
     def process_symbol_cycle(self, symbol: str) -> Optional[Position]:
         """
-        Runs one complete evaluation step for a single symbol:
-        Step 1: Get latest price tick.
-        Step 2: Update open positions and check if TP or SL was triggered.
-        Step 3: Retrieve recent OHLCV bars.
-        Step 4: Run strategy ensemble to get consensus vote.
-        Step 5: Check risk manager (drawdown circuit breaker, cooldown, max trades).
-        Step 6: Calculate volatility-based lot sizing (ATR formula).
-        Step 7: Execute order via broker.
+        One full evaluation pass for a single symbol:
+
+        1. Fetch the latest price tick and update open positions (check SL/TP).
+        2. Pull the last 100 bars for indicator calculations.
+        3. Run the strategy ensemble and collect a consensus signal.
+        4. Ask the risk manager if we're allowed to open a new position.
+        5. Size the position using ATR-based lot calculation.
+        6. Submit the order to the broker.
         """
-        # Step 1 & 2: Update price and check existing positions for SL/TP hits
         tick = self.feed.stream_next_tick(symbol)
         closed_trades = self.broker.update_positions_with_market_tick(symbol, tick['price'])
-        
+
         for trade in closed_trades:
             self.risk_manager.register_trade_closed(trade.pnl)
             won = trade.pnl > 0
-            # Update strategy ensemble weights based on outcome
             self.ensemble.record_trade_result(trade.contributing_strategies, won, trade.pnl)
-            
             tag = "WIN" if won else "LOSS"
             self.log_event(
-                "trade", 
+                "trade",
                 f"{tag}: {trade.symbol} {trade.action} closed ({trade.reason}) | PnL: ${trade.pnl:+.2f}"
             )
 
-        # Step 3: Get recent 100 bars for indicator calculations
         df = self.feed.get_latest_dataframe(symbol, lookback=100)
-        
-        # Step 4: Evaluate all strategies
         action, confidence, individual_signals = self.ensemble.evaluate_all(symbol, df)
-        
-        # Save signal telemetry for the web dashboard
+
         self.latest_signals[symbol] = {
             'action': action or 'HOLD',
             'confidence': confidence,
@@ -116,19 +101,16 @@ class TradingEngine:
             'indicators': {k: v.action for k, v in individual_signals.items()}
         }
 
-        # If no consensus was reached, do nothing
         if not action:
             return None
 
-        # Step 5: Risk Manager check
         open_positions = self.broker.get_open_positions()
         is_approved, rejection_reason = self.risk_manager.can_open_trade(symbol, len(open_positions))
-        
+
         if not is_approved:
             self.log_event("risk", f"Signal {action} on {symbol} skipped: {rejection_reason}")
             return None
 
-        # Step 6: Calculate ATR-based position size
         current_equity = self.broker.get_equity()
         order_spec = self.risk_manager.calculate_position_order(
             symbol=symbol,
@@ -141,10 +123,9 @@ class TradingEngine:
         if not order_spec:
             return None
 
-        # Step 7: Submit order to broker
         contributing = [name for name, sig in individual_signals.items() if sig.action == action]
         position = self.broker.execute_order(order_spec, contributing_strategies=contributing)
-        
+
         if position:
             self.risk_manager.record_trade_opened(symbol)
             self.log_event(
@@ -157,7 +138,7 @@ class TradingEngine:
         return None
 
     def run_cycle_all_assets(self):
-        """Runs the evaluation cycle across all 8 configured assets."""
+        """Run one evaluation cycle across every configured symbol."""
         self.cycle_count += 1
         for symbol in self.config.assets.keys():
             try:
@@ -167,12 +148,13 @@ class TradingEngine:
 
     def run_backtest(self, n_bars: int = 300) -> Dict[str, Any]:
         """
-        Executes a historical backtest bar-by-bar across all symbols.
-        Simulates past market conditions without lookahead bias.
+        Bar-by-bar historical simulation across all configured symbols.
+
+        Uses isolated broker/risk/ensemble instances so it doesn't mutate live state.
+        Closes any remaining open positions at the final bar price before reporting.
         """
-        self.log_event("backtest", f"Running backtest across {len(self.config.assets)} assets ({n_bars} bars each)...")
-        
-        # Fresh temporary broker and risk manager for backtest
+        self.log_event("backtest", f"Running {n_bars}-bar backtest across {len(self.config.assets)} assets...")
+
         backtest_broker = PaperBroker(
             initial_balance=self.config.risk.account_balance,
             assets=self.config.assets
@@ -182,14 +164,13 @@ class TradingEngine:
             initial_weights=self.config.strategies.weights.copy(),
             adx_threshold=self.config.strategies.adx_trend_threshold
         )
-        
-        # Generate historical data for all instruments
+
         historical_data = {
             sym: self.feed.generate_historical_ohlcv(sym, n_bars=n_bars)
             for sym in self.config.assets.keys()
         }
 
-        # Step through time sequentially (start after 35 bars for warmup)
+        # Skip the first 35 bars so indicators have enough history to warm up
         warmup = 35
         for t in range(warmup, n_bars):
             for symbol, df_full in historical_data.items():
@@ -197,13 +178,12 @@ class TradingEngine:
                 curr_bar = df_window.iloc[-1]
                 curr_price = float(curr_bar['close'])
 
-                # Check if high/low touched SL or TP
+                # Check high and low for SL/TP hits within the bar
                 for pos in list(backtest_broker.get_open_positions()):
                     if pos.symbol == symbol:
                         backtest_broker.update_positions_with_market_tick(symbol, float(curr_bar['high']))
                         backtest_broker.update_positions_with_market_tick(symbol, float(curr_bar['low']))
-                        
-                # Evaluate strategy signals
+
                 action, conf, individual = backtest_ensemble.evaluate_all(symbol, df_window)
                 if action:
                     can_trade, _ = backtest_risk.can_open_trade(symbol, len(backtest_broker.get_open_positions()))
@@ -220,25 +200,27 @@ class TradingEngine:
                             backtest_broker.execute_order(order_spec, contributing)
                             backtest_risk.record_trade_opened(symbol)
 
-        # Close any remaining open positions at final prices
         final_prices = {sym: float(df.iloc[-1]['close']) for sym, df in historical_data.items()}
         backtest_broker.close_all_positions(final_prices, reason="BACKTEST_END")
 
-        # Compile final quantitative report
         report = PerformanceAnalytics.generate_full_report(
             trades=backtest_broker.get_closed_trades(),
             equity_snapshots=backtest_broker.equity_history,
             initial_balance=self.config.risk.account_balance
         )
         report['strategy_weights'] = backtest_ensemble.weights
-        self.log_event("backtest", f"Backtest done: {report['total_trades']} trades | Win Rate: {report['win_rate_pct']}% | Sharpe: {report['sharpe_ratio']} | PnL: ${report['net_pnl']:+.2f}")
+        self.log_event(
+            "backtest",
+            f"Done: {report['total_trades']} trades | Win: {report['win_rate_pct']}% | "
+            f"Sharpe: {report['sharpe_ratio']} | PnL: ${report['net_pnl']:+.2f}"
+        )
         return report
 
     def get_telemetry(self) -> Dict[str, Any]:
-        """Provides state JSON for the web dashboard."""
+        """Snapshot of current engine state — consumed by the web dashboard."""
         equity = self.broker.get_equity()
         balance = self.broker.get_balance()
-        
+
         open_pos = [
             {
                 'id': p.id,
@@ -253,7 +235,7 @@ class TradingEngine:
             }
             for p in self.broker.get_open_positions()
         ]
-        
+
         closed = [
             {
                 'id': t.id,
@@ -268,13 +250,13 @@ class TradingEngine:
             }
             for t in reversed(self.broker.get_closed_trades()[-15:])
         ]
-        
+
         metrics = PerformanceAnalytics.generate_full_report(
             trades=self.broker.get_closed_trades(),
             equity_snapshots=getattr(self.broker, 'equity_history', []),
             initial_balance=self.config.risk.account_balance
         )
-        
+
         return {
             'equity': round(equity, 2),
             'balance': round(balance, 2),

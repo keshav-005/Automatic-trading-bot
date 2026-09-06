@@ -1,51 +1,32 @@
 """
-Quantitative Analytics & Performance Metrics Module
-Author: Computer Science Student Project
-
-This module calculates standard financial performance benchmarks.
-Key interview talking point:
-"Win rate by itself is a vanity metric. What matters in algorithmic trading is:
-1. Sharpe Ratio (risk-adjusted return)
-2. Maximum Drawdown (worst peak-to-valley loss)
-3. Profit Factor (Gross Profits / Gross Losses)
-4. Payoff Ratio (Average Win vs Average Loss)"
+Performance analytics — computes standard quantitative finance metrics from
+closed trade records and equity history snapshots.
 """
 
 from typing import List, Dict, Optional
 from core.compat import np, pd
 from execution.broker import TradeRecord
 
+
 class PerformanceAnalytics:
     """
     Computes performance statistics from completed trades and equity history.
+
+    Core metrics reported:
+    - Win Rate, Profit Factor, Payoff Ratio (trade-level stats)
+    - Sharpe Ratio, Sortino Ratio (risk-adjusted return)
+    - Maximum Drawdown % (worst peak-to-valley decline)
     """
 
     @staticmethod
     def calculate_trade_metrics(trades: List[TradeRecord], initial_balance: float = 10000.0) -> Dict:
-        """
-        Analyzes the list of closed trades:
-        - Win Rate % = (Winning Trades / Total Trades) * 100
-        - Profit Factor = Sum(Profits) / Sum(|Losses|)
-        - Net Realized PnL and ROI %
-        - Payoff Ratio = Average Win / Average Loss
-        """
         if not trades:
             return {
-                'total_trades': 0,
-                'winning_trades': 0,
-                'losing_trades': 0,
-                'win_rate_pct': 0.0,
-                'profit_factor': 0.0,
-                'net_pnl': 0.0,
-                'roi_pct': 0.0,
-                'gross_profit': 0.0,
-                'gross_loss': 0.0,
-                'avg_trade_pnl': 0.0,
-                'avg_win': 0.0,
-                'avg_loss': 0.0,
-                'max_win': 0.0,
-                'max_loss': 0.0,
-                'payoff_ratio': 0.0
+                'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                'win_rate_pct': 0.0, 'profit_factor': 0.0, 'net_pnl': 0.0,
+                'roi_pct': 0.0, 'gross_profit': 0.0, 'gross_loss': 0.0,
+                'avg_trade_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0,
+                'max_win': 0.0, 'max_loss': 0.0, 'payoff_ratio': 0.0
             }
 
         pnls = [t.pnl for t in trades]
@@ -62,9 +43,7 @@ class PerformanceAnalytics:
         net_pnl = round(sum(pnls), 2)
         roi_pct = round((net_pnl / initial_balance) * 100.0, 2)
 
-        # Profit Factor: Gross Profit divided by Gross Loss
         profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (99.9 if gross_profit > 0 else 0.0)
-        
         avg_win = (gross_profit / win_count) if win_count > 0 else 0.0
         avg_loss = (gross_loss / loss_count) if loss_count > 0 else 0.0
         payoff_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else 0.0
@@ -90,54 +69,36 @@ class PerformanceAnalytics:
     @staticmethod
     def calculate_portfolio_metrics(equity_series: List[float], risk_free_rate: float = 0.02) -> Dict:
         """
-        Calculates risk-adjusted metrics across the historical equity curve:
-        
-        1. Sharpe Ratio:
-           Formula: (Mean(Returns) - Risk_Free_Rate) / Std(Returns) * sqrt(252)
-           Measures excess return earned per unit of total risk.
-           
-        2. Sortino Ratio:
-           Formula: (Mean(Returns) - Risk_Free_Rate) / Downside_Std * sqrt(252)
-           Similar to Sharpe, but only penalizes downside volatility (negative returns).
-           
-        3. Maximum Drawdown (MDD):
-           Formula: max((Peak_Equity - Current_Equity) / Peak_Equity)
-           The largest drop from an all-time peak to a subsequent low.
+        Compute Sharpe ratio, Sortino ratio, and maximum drawdown from the equity curve.
+
+        Sharpe  = (mean_return - rf) / std_return * sqrt(252)
+        Sortino = (mean_return - rf) / downside_std * sqrt(252)
+        MDD     = max((peak_equity - current_equity) / peak_equity)
         """
         if len(equity_series) < 2:
             return {
-                'sharpe_ratio': 0.0,
-                'sortino_ratio': 0.0,
-                'max_drawdown_dollars': 0.0,
-                'max_drawdown_pct': 0.0,
+                'sharpe_ratio': 0.0, 'sortino_ratio': 0.0,
+                'max_drawdown_dollars': 0.0, 'max_drawdown_pct': 0.0,
                 'current_equity': equity_series[-1] if equity_series else 10000.0,
                 'peak_equity': equity_series[-1] if equity_series else 10000.0
             }
 
         eq = np.array(equity_series)
-        
-        # Percentage returns between consecutive equity points
         returns = np.diff(eq) / eq[:-1]
-        
-        # Calculate Peak and Drawdowns
+
         peak = np.maximum.accumulate(eq)
         drawdown_dollars = peak - eq
         drawdown_pct = np.where(peak > 0, drawdown_dollars / peak, 0.0)
-        
+
         max_dd_dollars = round(float(np.max(drawdown_dollars)), 2)
         max_dd_pct = round(float(np.max(drawdown_pct)) * 100.0, 2)
 
-        # Annualized Sharpe (assuming 252 trading periods per year)
         mean_ret = np.mean(returns)
         std_ret = np.std(returns)
         rf_per_period = risk_free_rate / 252.0
 
-        if std_ret > 1e-7:
-            sharpe = (mean_ret - rf_per_period) / std_ret * np.sqrt(252.0)
-        else:
-            sharpe = 0.0
+        sharpe = (mean_ret - rf_per_period) / std_ret * np.sqrt(252.0) if std_ret > 1e-7 else 0.0
 
-        # Downside deviation for Sortino (only negative returns relative to risk-free rate)
         downside_returns = returns[returns < rf_per_period]
         if len(downside_returns) > 0:
             downside_std = np.sqrt(np.mean((downside_returns - rf_per_period) ** 2))
@@ -155,13 +116,13 @@ class PerformanceAnalytics:
         }
 
     @staticmethod
-    def generate_full_report(trades: List[TradeRecord], equity_snapshots: List[Dict], initial_balance: float = 10000.0) -> Dict:
-        """Combines trade execution stats and equity metrics into one complete dictionary."""
+    def generate_full_report(
+        trades: List[TradeRecord],
+        equity_snapshots: List[Dict],
+        initial_balance: float = 10000.0
+    ) -> Dict:
+        """Merge trade-level and portfolio-level metrics into a single report dict."""
         equity_series = [s['equity'] for s in equity_snapshots] if equity_snapshots else [initial_balance]
         trade_metrics = PerformanceAnalytics.calculate_trade_metrics(trades, initial_balance)
         portfolio_metrics = PerformanceAnalytics.calculate_portfolio_metrics(equity_series)
-        
-        return {
-            **trade_metrics,
-            **portfolio_metrics
-        }
+        return {**trade_metrics, **portfolio_metrics}
