@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AlgoTrader — Quantitative Strategy & Backtest Terminal</title>
   <meta name="description" content="Minimalist algorithmic trading and backtest terminal with interactive strategy configuration, risk gating, and multi-asset simulation.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #090a0c;
@@ -21,8 +24,8 @@
       --green-bg: rgba(16, 185, 129, 0.08);
       --red: #f43f5e;
       --red-bg: rgba(244, 63, 94, 0.08);
-      --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-      --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
 
     *, *::before, *::after {
@@ -36,9 +39,29 @@
       color: var(--text);
       font-family: var(--sans);
       font-size: 13px;
-      line-height: 1.45;
+      line-height: 1.5;
+      letter-spacing: -0.012em;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       min-height: 100vh;
+    }
+
+    /* Tabular figures for numbers, metrics, tables, and tickers */
+    .metric-val,
+    .metric-footnote,
+    .bt-metric-val,
+    table.data-table,
+    .chart-meta,
+    .weight-val,
+    .terminal-body,
+    .asset-chip,
+    input,
+    select {
+      font-family: var(--mono);
+      font-feature-settings: 'tnum' 1, 'zero' 1;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
     }
 
     /* Scrollbars */
@@ -1264,7 +1287,7 @@
       ctx.stroke();
 
       ctx.fillStyle = '#71717a';
-      ctx.font = `${10 * window.devicePixelRatio}px ui-monospace, monospace`;
+      ctx.font = `${10 * window.devicePixelRatio}px 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace`;
       ctx.textAlign = 'left';
       ctx.fillText('$' + val.toFixed(0), PAD_L + chartW + 6, y + 3 * window.devicePixelRatio);
     }
