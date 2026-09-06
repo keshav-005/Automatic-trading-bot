@@ -152,21 +152,6 @@ python -m unittest discover -s tests -v
 
 ---
 
-## 💼 Resume Bullet Points (Ready to Copy)
-
-### For Software Engineering (Backend / Systems):
-- *Designed an event-driven algorithmic trading and backtesting engine in Python using decoupled OOP principles (Engine, Broker, RiskManager, Strategy Ensemble).*
-- *Engineered a standalone paper trading simulator modeling bid/ask spreads, slippage, and automated order execution, allowing 100% offline evaluation across Windows, Mac, and Linux.*
-- *Built a lightweight, multithreaded HTTP telemetry dashboard using Python's standard library and HTML5 Canvas to stream real-time portfolio metrics and strategy allocations.*
-- *Wrote comprehensive automated unit tests (`unittest`) covering technical indicator calculations, risk circuit breakers, and order fill lifecycles.*
-
-### For Quantitative Development / FinTech:
-- *Formulated an institutional-grade risk management framework enforcing ATR-volatility position sizing (1% constant dollar risk) and portfolio circuit breakers (5% daily loss cap).*
-- *Developed pure vectorized NumPy/Pandas implementations of 6 technical indicators (EMA, RSI, MACD, Bollinger Bands, ATR, ADX), reducing runtime latency and eliminating third-party C-library dependencies.*
-- *Implemented an adaptive Bayesian strategy ensemble with Laplace-smoothed dynamic performance weighting, automatically allocating greater authority to outperforming systems.*
-- *Built a quantitative analytics engine computing annualized Sharpe Ratio, Sortino Ratio, Maximum Drawdown, and Profit Factor across multi-asset portfolios.*
-
----
 
 ## 📄 License
 MIT License. Built for educational and portfolio demonstration purposes.
