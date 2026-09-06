@@ -146,32 +146,60 @@ class TradingEngine:
             except Exception as e:
                 self.log_event("error", f"Error on {symbol}: {str(e)}")
 
-    def run_backtest(self, n_bars: int = 300) -> Dict[str, Any]:
+    def run_backtest(
+        self,
+        n_bars: int = 200,
+        custom_risk: Optional[Any] = None,
+        custom_strategies: Optional[Dict[str, Any]] = None,
+        selected_assets: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
-        Bar-by-bar historical simulation across all configured symbols.
+        Bar-by-bar historical simulation across configured symbols with custom conditions.
 
         Uses isolated broker/risk/ensemble instances so it doesn't mutate live state.
-        Closes any remaining open positions at the final bar price before reporting.
+        Returns complete metrics, trade log, and equity trajectory.
         """
-        self.log_event("backtest", f"Running {n_bars}-bar backtest across {len(self.config.assets)} assets...")
+        risk_cfg = custom_risk or self.config.risk
+        initial_balance = float(getattr(risk_cfg, 'account_balance', 10000.0))
+
+        # Filter assets if specified
+        if selected_assets:
+            assets_map = {k: self.config.assets[k] for k in selected_assets if k in self.config.assets}
+            if not assets_map:
+                assets_map = self.config.assets
+        else:
+            assets_map = self.config.assets
+
+        self.log_event("backtest", f"Running {n_bars}-bar backtest across {len(assets_map)} assets...")
 
         backtest_broker = PaperBroker(
-            initial_balance=self.config.risk.account_balance,
-            assets=self.config.assets
+            initial_balance=initial_balance,
+            assets=assets_map
         )
-        backtest_risk = RiskManager(self.config.risk, self.config.assets)
+        backtest_risk = RiskManager(risk_cfg, assets_map)
+
+        strat_opts = custom_strategies or {}
+        enabled_strats = strat_opts.get("enabled_strategies")
+        strat_params = strat_opts.get("strategy_params")
+        strat_weights = strat_opts.get("strategy_weights")
+        adx_th = float(strat_opts.get("adx_threshold", self.config.strategies.adx_trend_threshold))
+        conf_th = float(strat_opts.get("confidence_threshold", self.config.strategies.signal_confidence_threshold))
+
         backtest_ensemble = StrategyEnsemble(
-            initial_weights=self.config.strategies.weights.copy(),
-            adx_threshold=self.config.strategies.adx_trend_threshold
+            initial_weights=strat_weights,
+            adx_threshold=adx_th,
+            confidence_threshold=conf_th,
+            enabled_strategies=enabled_strats,
+            strategy_params=strat_params
         )
 
         historical_data = {
             sym: self.feed.generate_historical_ohlcv(sym, n_bars=n_bars)
-            for sym in self.config.assets.keys()
+            for sym in assets_map.keys()
         }
 
-        # Skip the first 35 bars so indicators have enough history to warm up
-        warmup = 35
+        # Skip warmup bars so indicators have enough history to warm up
+        warmup = min(35, max(15, n_bars // 4))
         for t in range(warmup, n_bars):
             for symbol, df_full in historical_data.items():
                 df_window = df_full.iloc[:t].copy()
@@ -206,9 +234,29 @@ class TradingEngine:
         report = PerformanceAnalytics.generate_full_report(
             trades=backtest_broker.get_closed_trades(),
             equity_snapshots=backtest_broker.equity_history,
-            initial_balance=self.config.risk.account_balance
+            initial_balance=initial_balance
         )
         report['strategy_weights'] = backtest_ensemble.weights
+        report['strategy_performance'] = backtest_ensemble.performance
+        report['equity_curve'] = [round(s['equity'], 2) for s in backtest_broker.equity_history]
+        report['trades'] = [
+            {
+                'id': t.id,
+                'symbol': t.symbol,
+                'action': t.action,
+                'lots': round(t.lots, 2),
+                'entry_price': round(t.entry_price, 5),
+                'exit_price': round(t.exit_price, 5),
+                'pnl': round(t.pnl, 2),
+                'reason': t.reason,
+                'close_time': t.close_time.strftime("%H:%M:%S")
+            }
+            for t in backtest_broker.get_closed_trades()
+        ]
+        report['bars_tested'] = n_bars
+        report['assets_tested'] = list(assets_map.keys())
+        report['enabled_strategies'] = list(backtest_ensemble.strategies.keys())
+
         self.log_event(
             "backtest",
             f"Done: {report['total_trades']} trades | Win: {report['win_rate_pct']}% | "

@@ -14,7 +14,7 @@ from urllib.parse import urlparse, parse_qs
 from typing import Optional
 
 from core.engine import TradingEngine
-from config import default_config
+from config import default_config, RiskConfig
 
 # Shared engine instance — persists across requests within a single process.
 # On Vercel each invocation is a cold start, so this is effectively per-request.
@@ -123,11 +123,56 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
 
         if "backtest" in path:
+            payload = {}
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length > 0:
+                try:
+                    payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+                except Exception:
+                    payload = {}
+
+            bars_val = payload.get("bars") or query.get("bars", ["200"])[0]
             try:
-                n_bars = max(30, min(500, int(query.get("bars", ["200"])[0])))
-            except (ValueError, IndexError):
+                n_bars = max(30, min(500, int(bars_val)))
+            except (ValueError, TypeError):
                 n_bars = 200
-            report = self.active_engine.run_backtest(n_bars=n_bars)
+
+            custom_risk = None
+            if payload:
+                init_bal = float(payload.get("initial_balance", 10000.0))
+                risk_pct = float(payload.get("risk_per_trade", 1.0))
+                if risk_pct > 0.5:
+                    risk_pct = risk_pct / 100.0
+                risk_pct = max(0.001, min(0.10, risk_pct))
+                rr_ratio = max(0.5, min(10.0, float(payload.get("risk_reward_ratio", 1.8))))
+                atr_sl = max(0.5, min(5.0, float(payload.get("atr_multiplier_sl", 1.5))))
+                max_pos = max(1, min(15, int(payload.get("max_open_positions", 5))))
+                custom_risk = RiskConfig(
+                    account_balance=max(100.0, init_bal),
+                    risk_per_trade=risk_pct,
+                    risk_reward_ratio=rr_ratio,
+                    atr_multiplier_sl=atr_sl,
+                    max_open_positions=max_pos
+                )
+
+            custom_strategies = None
+            if payload:
+                custom_strategies = {
+                    "enabled_strategies": payload.get("enabled_strategies"),
+                    "strategy_params": payload.get("strategy_params", {}),
+                    "strategy_weights": payload.get("strategy_weights"),
+                    "adx_threshold": float(payload.get("adx_threshold", 22.0)),
+                    "confidence_threshold": float(payload.get("confidence_threshold", 0.40))
+                }
+
+            selected_assets = payload.get("assets") if payload else None
+
+            report = self.active_engine.run_backtest(
+                n_bars=n_bars,
+                custom_risk=custom_risk,
+                custom_strategies=custom_strategies,
+                selected_assets=selected_assets
+            )
             report["ok"] = True
             body = json.dumps(report).encode("utf-8")
             self._set_headers(length=len(body))
@@ -192,11 +237,57 @@ def wsgi_app(environ, start_response):
         return [body]
 
     if "backtest" in raw_path:
+        payload = {}
         try:
-            n_bars = max(30, min(500, int(query.get("bars", ["200"])[0])))
-        except (ValueError, IndexError):
+            length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+            if length > 0:
+                body_bytes = environ["wsgi.input"].read(length)
+                payload = json.loads(body_bytes.decode("utf-8"))
+        except Exception:
+            payload = {}
+
+        bars_val = payload.get("bars") or query.get("bars", ["200"])[0]
+        try:
+            n_bars = max(30, min(500, int(bars_val)))
+        except (ValueError, TypeError):
             n_bars = 200
-        report = engine.run_backtest(n_bars=n_bars)
+
+        custom_risk = None
+        if payload:
+            init_bal = float(payload.get("initial_balance", 10000.0))
+            risk_pct = float(payload.get("risk_per_trade", 1.0))
+            if risk_pct > 0.5:
+                risk_pct = risk_pct / 100.0
+            risk_pct = max(0.001, min(0.10, risk_pct))
+            rr_ratio = max(0.5, min(10.0, float(payload.get("risk_reward_ratio", 1.8))))
+            atr_sl = max(0.5, min(5.0, float(payload.get("atr_multiplier_sl", 1.5))))
+            max_pos = max(1, min(15, int(payload.get("max_open_positions", 5))))
+            custom_risk = RiskConfig(
+                account_balance=max(100.0, init_bal),
+                risk_per_trade=risk_pct,
+                risk_reward_ratio=rr_ratio,
+                atr_multiplier_sl=atr_sl,
+                max_open_positions=max_pos
+            )
+
+        custom_strategies = None
+        if payload:
+            custom_strategies = {
+                "enabled_strategies": payload.get("enabled_strategies"),
+                "strategy_params": payload.get("strategy_params", {}),
+                "strategy_weights": payload.get("strategy_weights"),
+                "adx_threshold": float(payload.get("adx_threshold", 22.0)),
+                "confidence_threshold": float(payload.get("confidence_threshold", 0.40))
+            }
+
+        selected_assets = payload.get("assets") if payload else None
+
+        report = engine.run_backtest(
+            n_bars=n_bars,
+            custom_risk=custom_risk,
+            custom_strategies=custom_strategies,
+            selected_assets=selected_assets
+        )
         report["ok"] = True
         body = json.dumps(report).encode("utf-8")
         start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(body)))] + cors_headers)

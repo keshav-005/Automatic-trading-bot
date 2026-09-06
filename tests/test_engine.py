@@ -156,5 +156,31 @@ class TestTradingBot(unittest.TestCase):
         self.assertIn('sharpe_ratio', report)
         self.assertIn('profit_factor', report)
 
+    def test_interactive_custom_backtest(self):
+        """Test running backtest with custom risk, custom strategy selection, and parameters."""
+        engine = TradingEngine(default_config)
+        custom_risk = RiskConfig(account_balance=25000.0, risk_per_trade=0.015)
+        custom_strategies = {
+            'enabled_strategies': ['ema_cross', 'rsi_reversion'],
+            'strategy_params': {
+                'ema_cross': {'fast_span': 7, 'slow_span': 18},
+                'rsi_reversion': {'period': 10, 'lower_threshold': 28.0}
+            },
+            'adx_threshold': 20.0,
+            'confidence_threshold': 0.35
+        }
+        report = engine.run_backtest(
+            n_bars=50,
+            custom_risk=custom_risk,
+            custom_strategies=custom_strategies,
+            selected_assets=['EURUSD', 'XAUUSD']
+        )
+
+        self.assertEqual(report['enabled_strategies'], ['ema_cross', 'rsi_reversion'])
+        self.assertEqual(report['assets_tested'], ['EURUSD', 'XAUUSD'])
+        self.assertIn('equity_curve', report)
+        self.assertIn('trades', report)
+        self.assertIn('strategy_performance', report)
+
 if __name__ == '__main__':
     unittest.main()

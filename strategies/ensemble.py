@@ -81,12 +81,14 @@ class RSIReversionStrategy(BaseStrategy):
     """
     Adaptive RSI mean-reversion.
 
-    The overbought/oversold thresholds widen during high-volatility periods
-    (ATR-relative adjustment) so we don't trigger prematurely in fast markets.
+    The overbought/oversold thresholds adapt based on ATR volatility,
+    preventing premature counter-trend entries in high-momentum markets.
     """
-    def __init__(self, period: int = 14):
+    def __init__(self, period: int = 14, lower_threshold: float = 30.0, upper_threshold: float = 70.0):
         super().__init__("rsi_reversion")
         self.period = period
+        self.lower_threshold = lower_threshold
+        self.upper_threshold = upper_threshold
 
     def evaluate(self, symbol: str, df: pd.DataFrame) -> StrategySignal:
         if len(df) < self.period + 5:
@@ -98,16 +100,16 @@ class RSIReversionStrategy(BaseStrategy):
         curr_close = df['close'].iloc[-1]
         volatility_ratio = (atr.iloc[-1] / curr_close) * 20.0
 
-        lower_threshold = max(22.0, 30.0 - volatility_ratio)
-        upper_threshold = min(78.0, 70.0 + volatility_ratio)
+        lower_bound = max(18.0, self.lower_threshold - volatility_ratio)
+        upper_bound = min(82.0, self.upper_threshold + volatility_ratio)
 
         current_rsi = rsi.iloc[-1]
-        if current_rsi < lower_threshold:
-            conf = min(1.0, (lower_threshold - current_rsi) / 10.0 + 0.6)
-            return StrategySignal('BUY', conf, self.name, {'rsi': current_rsi, 'threshold': lower_threshold})
-        elif current_rsi > upper_threshold:
-            conf = min(1.0, (current_rsi - upper_threshold) / 10.0 + 0.6)
-            return StrategySignal('SELL', conf, self.name, {'rsi': current_rsi, 'threshold': upper_threshold})
+        if current_rsi < lower_bound:
+            conf = min(1.0, (lower_bound - current_rsi) / 10.0 + 0.6)
+            return StrategySignal('BUY', conf, self.name, {'rsi': current_rsi, 'threshold': lower_bound})
+        elif current_rsi > upper_bound:
+            conf = min(1.0, (current_rsi - upper_bound) / 10.0 + 0.6)
+            return StrategySignal('SELL', conf, self.name, {'rsi': current_rsi, 'threshold': upper_bound})
 
         return StrategySignal('HOLD', 0.0, self.name, {'rsi': current_rsi})
 
@@ -119,16 +121,20 @@ class MACDMomentumStrategy(BaseStrategy):
     A MACD crossover is only acted on when volume is at least 80% of its 20-bar
     average — this avoids signals that fire during thin, low-liquidity periods.
     """
-    def __init__(self):
+    def __init__(self, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9, vol_factor: float = 0.8):
         super().__init__("macd_momentum")
+        self.fast_period = fast_period
+        self.slow_period = slow_period
+        self.signal_period = signal_period
+        self.vol_factor = vol_factor
 
     def evaluate(self, symbol: str, df: pd.DataFrame) -> StrategySignal:
-        if len(df) < 35:
+        if len(df) < max(35, self.slow_period + self.signal_period):
             return StrategySignal('HOLD', 0.0, self.name)
 
-        macd_line, signal_line, hist = calculate_macd(df['close'])
+        macd_line, signal_line, hist = calculate_macd(df['close'], self.fast_period, self.slow_period, self.signal_period)
         mean_vol = df['volume'].rolling(20, min_periods=1).mean()
-        has_volume = df['volume'].iloc[-1] >= (mean_vol.iloc[-1] * 0.8)
+        has_volume = df['volume'].iloc[-1] >= (mean_vol.iloc[-1] * self.vol_factor)
 
         if macd_line.iloc[-1] > signal_line.iloc[-1] and hist.iloc[-1] > 0 and has_volume:
             conf = 0.85 if hist.iloc[-1] > hist.iloc[-2] else 0.60
@@ -173,12 +179,13 @@ class VolumeAnomalyStrategy(BaseStrategy):
     """
     Institutional volume spike detector.
 
-    When volume is more than 1.8× its 20-bar average, a large participant is likely
-    entering the market. Candle direction (open vs close) tells us which way.
+    When volume is more than multiplier × its rolling average, a large participant
+    is likely active. Candle direction (open vs close) determines bias.
     """
-    def __init__(self, period: int = 20):
+    def __init__(self, period: int = 20, multiplier: float = 1.8):
         super().__init__("volume_anomaly")
         self.period = period
+        self.multiplier = multiplier
 
     def evaluate(self, symbol: str, df: pd.DataFrame) -> StrategySignal:
         if len(df) < self.period:
@@ -187,7 +194,7 @@ class VolumeAnomalyStrategy(BaseStrategy):
         mean_vol, ratio = calculate_volume_anomaly(df['volume'], self.period)
         vol_ratio = ratio.iloc[-1]
 
-        if vol_ratio > 1.8:
+        if vol_ratio > self.multiplier:
             curr_close = df['close'].iloc[-1]
             curr_open = df['open'].iloc[-1]
             if curr_close > curr_open:
@@ -200,15 +207,16 @@ class VolumeAnomalyStrategy(BaseStrategy):
 
 class MarketSentimentStrategy(BaseStrategy):
     """Financial news sentiment scoring via domain keyword analysis."""
-    def __init__(self, analyzer: Optional[FinancialSentimentAnalyzer] = None):
+    def __init__(self, analyzer: Optional[FinancialSentimentAnalyzer] = None, threshold: float = 0.25):
         super().__init__("market_sentiment")
         self.analyzer = analyzer or FinancialSentimentAnalyzer()
+        self.threshold = threshold
 
     def evaluate(self, symbol: str, df: pd.DataFrame) -> StrategySignal:
         score = self.analyzer.get_asset_sentiment(symbol)
-        if score > 0.25:
+        if score > self.threshold:
             return StrategySignal('BUY', min(1.0, abs(score)), self.name, {'sentiment': score})
-        elif score < -0.25:
+        elif score < -self.threshold:
             return StrategySignal('SELL', min(1.0, abs(score)), self.name, {'sentiment': score})
 
         return StrategySignal('HOLD', 0.0, self.name, {'sentiment': score})
@@ -216,29 +224,66 @@ class MarketSentimentStrategy(BaseStrategy):
 
 class StrategyEnsemble:
     """
-    Orchestrates all six strategies and produces a single actionable signal.
+    Orchestrates any combination of trading strategies into a consensus signal.
 
     Workflow per bar:
-    1. Collect signals from every strategy in parallel.
+    1. Collect signals from all active strategies.
     2. Gate on ADX — skip the vote entirely if the market isn't trending.
-    3. Compute weighted BUY/SELL scores. The dominant side must exceed 0.40
-       confidence AND be 1.3× the opposing score to trigger a trade.
+    3. Compute weighted BUY/SELL scores. The dominant side must exceed
+       confidence_threshold AND be 1.3× the opposing score to trigger a trade.
     4. After each trade closes, update strategy win/loss records and rebalance
        weights using Laplace-smoothed empirical win rates.
     """
-    def __init__(self, initial_weights: Optional[Dict[str, float]] = None, adx_threshold: float = 22.0):
-        self.adx_threshold = adx_threshold
+    def __init__(
+        self,
+        initial_weights: Optional[Dict[str, float]] = None,
+        adx_threshold: float = 22.0,
+        confidence_threshold: float = 0.40,
+        enabled_strategies: Optional[list] = None,
+        strategy_params: Optional[Dict[str, Dict]] = None
+    ):
+        self.adx_threshold = float(adx_threshold)
+        self.confidence_threshold = float(confidence_threshold)
+        params = strategy_params or {}
 
-        self.strategies: Dict[str, BaseStrategy] = {
-            'ema_cross':         EMACrossStrategy(),
-            'rsi_reversion':     RSIReversionStrategy(),
-            'macd_momentum':     MACDMomentumStrategy(),
-            'bollinger_squeeze': BollingerSqueezeStrategy(),
-            'volume_anomaly':    VolumeAnomalyStrategy(),
-            'market_sentiment':  MarketSentimentStrategy()
+        all_factories = {
+            'ema_cross': lambda: EMACrossStrategy(
+                fast_span=int(params.get('ema_cross', {}).get('fast_span', 9)),
+                slow_span=int(params.get('ema_cross', {}).get('slow_span', 21))
+            ),
+            'rsi_reversion': lambda: RSIReversionStrategy(
+                period=int(params.get('rsi_reversion', {}).get('period', 14)),
+                lower_threshold=float(params.get('rsi_reversion', {}).get('lower_threshold', 30.0)),
+                upper_threshold=float(params.get('rsi_reversion', {}).get('upper_threshold', 70.0))
+            ),
+            'macd_momentum': lambda: MACDMomentumStrategy(
+                fast_period=int(params.get('macd_momentum', {}).get('fast_period', 12)),
+                slow_period=int(params.get('macd_momentum', {}).get('slow_period', 26)),
+                signal_period=int(params.get('macd_momentum', {}).get('signal_period', 9))
+            ),
+            'bollinger_squeeze': lambda: BollingerSqueezeStrategy(
+                period=int(params.get('bollinger_squeeze', {}).get('period', 20)),
+                squeeze_cutoff=float(params.get('bollinger_squeeze', {}).get('squeeze_cutoff', 0.12))
+            ),
+            'volume_anomaly': lambda: VolumeAnomalyStrategy(
+                period=int(params.get('volume_anomaly', {}).get('period', 20)),
+                multiplier=float(params.get('volume_anomaly', {}).get('multiplier', 1.8))
+            ),
+            'market_sentiment': lambda: MarketSentimentStrategy(
+                threshold=float(params.get('market_sentiment', {}).get('threshold', 0.25))
+            )
         }
 
-        self.weights = initial_weights or {
+        if enabled_strategies:
+            active_keys = [k for k in enabled_strategies if k in all_factories]
+            if not active_keys:
+                active_keys = list(all_factories.keys())
+        else:
+            active_keys = list(all_factories.keys())
+
+        self.strategies: Dict[str, BaseStrategy] = {k: all_factories[k]() for k in active_keys}
+
+        default_weights = {
             'ema_cross':         0.25,
             'rsi_reversion':     0.20,
             'macd_momentum':     0.18,
@@ -246,6 +291,11 @@ class StrategyEnsemble:
             'volume_anomaly':    0.12,
             'market_sentiment':  0.10
         }
+
+        if initial_weights:
+            self.weights = {k: float(initial_weights.get(k, default_weights.get(k, 1.0))) for k in self.strategies}
+        else:
+            self.weights = {k: default_weights.get(k, 1.0) for k in self.strategies}
         self._normalize_weights()
 
         self.performance: Dict[str, Dict[str, float]] = {
@@ -284,10 +334,12 @@ class StrategyEnsemble:
             elif sig.action == 'SELL':
                 sell_score += weight * sig.confidence
 
-        if buy_score > 0.40 and buy_score > (sell_score * 1.3):
+        if buy_score > self.confidence_threshold and buy_score > (sell_score * 1.3):
             return 'BUY', round(buy_score, 3), signals
-        elif sell_score > 0.40 and sell_score > (buy_score * 1.3):
+        elif sell_score > self.confidence_threshold and sell_score > (buy_score * 1.3):
             return 'SELL', round(sell_score, 3), signals
+
+        return None, max(buy_score, sell_score), signals
 
         return None, max(buy_score, sell_score), signals
 

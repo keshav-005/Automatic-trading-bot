@@ -9,9 +9,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-# Import directly — avoids pulling in dashboard.server which triggers unneeded side effects
 from core.engine import TradingEngine
-from config import default_config
+from config import default_config, RiskConfig
 
 
 class handler(BaseHTTPRequestHandler):
@@ -30,17 +29,71 @@ class handler(BaseHTTPRequestHandler):
 
     def _run(self):
         try:
+            payload = {}
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length > 0:
+                try:
+                    raw_body = self.rfile.read(content_length)
+                    payload = json.loads(raw_body.decode("utf-8"))
+                except Exception:
+                    payload = {}
+
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
 
+            # Bar count: from payload or query params
+            bars_val = payload.get("bars") or params.get("bars", ["200"])[0]
             try:
-                n_bars = max(30, min(500, int(params.get("bars", ["200"])[0])))
-            except (ValueError, IndexError):
+                n_bars = max(30, min(500, int(bars_val)))
+            except (ValueError, TypeError):
                 n_bars = 200
 
-            # Spin up a fresh engine for each backtest — Vercel is stateless anyway
+            # Custom Risk rules
+            custom_risk = None
+            if payload:
+                init_bal = float(payload.get("initial_balance", 10000.0))
+                risk_pct = float(payload.get("risk_per_trade", 1.0))
+                # If entered as e.g. 1.0 (meaning 1%), convert to 0.01
+                if risk_pct > 0.5:
+                    risk_pct = risk_pct / 100.0
+                risk_pct = max(0.001, min(0.10, risk_pct))
+
+                rr_ratio = max(0.5, min(10.0, float(payload.get("risk_reward_ratio", 1.8))))
+                atr_sl = max(0.5, min(5.0, float(payload.get("atr_multiplier_sl", 1.5))))
+                max_pos = max(1, min(15, int(payload.get("max_open_positions", 5))))
+
+                custom_risk = RiskConfig(
+                    account_balance=max(100.0, init_bal),
+                    risk_per_trade=risk_pct,
+                    risk_reward_ratio=rr_ratio,
+                    atr_multiplier_sl=atr_sl,
+                    max_open_positions=max_pos
+                )
+
+            # Custom Strategy conditions
+            custom_strategies = None
+            if payload:
+                custom_strategies = {
+                    "enabled_strategies": payload.get("enabled_strategies"),
+                    "strategy_params": payload.get("strategy_params", {}),
+                    "strategy_weights": payload.get("strategy_weights"),
+                    "adx_threshold": float(payload.get("adx_threshold", 22.0)),
+                    "confidence_threshold": float(payload.get("confidence_threshold", 0.40))
+                }
+
+            # Selected assets
+            selected_assets = payload.get("assets") if payload else None
+            if not selected_assets and "assets" in params:
+                selected_assets = [a.strip().upper() for a in params["assets"][0].split(",") if a.strip()]
+
+            # Spin up a fresh engine for each backtest — isolated and safe
             engine = TradingEngine(default_config)
-            report = engine.run_backtest(n_bars=n_bars)
+            report = engine.run_backtest(
+                n_bars=n_bars,
+                custom_risk=custom_risk,
+                custom_strategies=custom_strategies,
+                selected_assets=selected_assets
+            )
             report["ok"] = True
 
             body = json.dumps(report).encode("utf-8")
