@@ -14,7 +14,7 @@ This module implements two essential risk controls:
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict
-import pandas as pd
+from core.compat import pd
 
 from config import RiskConfig, AssetConfig
 from strategies.indicators import calculate_atr

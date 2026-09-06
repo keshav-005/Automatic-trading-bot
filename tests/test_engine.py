@@ -12,8 +12,7 @@ These unit tests verify:
 """
 
 import unittest
-import numpy as np
-import pandas as pd
+from core.compat import np, pd
 from datetime import datetime
 
 from config import default_config, RiskConfig, AssetConfig

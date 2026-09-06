@@ -9,8 +9,7 @@ Why did we write them ourselves instead of using a third-party library like 'pan
 3. Implementing the formulas directly proves deep understanding of financial mathematics.
 """
 
-import numpy as np
-import pandas as pd
+from core.compat import np, pd
 from typing import Tuple
 
 def calculate_ema(series: pd.Series, span: int) -> pd.Series:

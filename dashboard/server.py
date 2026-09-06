@@ -11,7 +11,7 @@ import json
 import os
 import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from typing import Optional
 
 from core.engine import TradingEngine
@@ -83,6 +83,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.lower().rstrip("/")
+        query = parse_qs(parsed.query)
 
         # 1. Favicon
         if "favicon.ico" in path:
@@ -90,15 +91,43 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # 2. Status Telemetry API (handles /api/status, /status, or similar)
+        # 2. Status Telemetry API
         if "status" in path:
+            tick = query.get("tick", ["1"])[0]
+            if tick != "0":
+                self.active_engine.run_cycle_all_assets()
             data = self.active_engine.get_telemetry()
             body = json.dumps(data).encode("utf-8")
             self._set_headers(content_type="application/json", length=len(body))
             self.wfile.write(body)
             return
 
-        # 3. Default: Serve HTML Dashboard for all page requests (/, /main.py, /index.html, etc.)
+        # 3. Backtest API (support GET)
+        if "backtest" in path:
+            bars_param = query.get("bars", ["200"])[0]
+            try:
+                n_bars = max(30, min(500, int(bars_param)))
+            except ValueError:
+                n_bars = 200
+            report = self.active_engine.run_backtest(n_bars=n_bars)
+            report["ok"] = True
+            body = json.dumps(report).encode("utf-8")
+            self._set_headers(content_type="application/json", length=len(body))
+            self.wfile.write(body)
+            return
+
+        # 4. Step Simulation API (support GET)
+        if "step" in path:
+            for _ in range(5):
+                self.active_engine.run_cycle_all_assets()
+            data = self.active_engine.get_telemetry()
+            data["ok"] = True
+            body = json.dumps(data).encode("utf-8")
+            self._set_headers(content_type="application/json", length=len(body))
+            self.wfile.write(body)
+            return
+
+        # 5. Default: Serve HTML Dashboard for all page requests
         body = get_dashboard_html().encode("utf-8")
         self._set_headers(content_type="text/html; charset=utf-8", length=len(body))
         self.wfile.write(body)
@@ -106,10 +135,17 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path.lower().rstrip("/")
+        query = parse_qs(parsed.query)
 
         # 1. Run Historical Backtest
         if "backtest" in path:
-            report = self.active_engine.run_backtest(n_bars=200)
+            bars_param = query.get("bars", ["200"])[0]
+            try:
+                n_bars = max(30, min(500, int(bars_param)))
+            except ValueError:
+                n_bars = 200
+            report = self.active_engine.run_backtest(n_bars=n_bars)
+            report["ok"] = True
             body = json.dumps(report).encode("utf-8")
             self._set_headers(content_type="application/json", length=len(body))
             self.wfile.write(body)
@@ -120,6 +156,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             for _ in range(5):
                 self.active_engine.run_cycle_all_assets()
             data = self.active_engine.get_telemetry()
+            data["ok"] = True
+            body = json.dumps(data).encode("utf-8")
+            self._set_headers(content_type="application/json", length=len(body))
+            self.wfile.write(body)
+            return
+
+        # 3. Reset simulation
+        if "reset" in path:
+            global _global_engine
+            _global_engine = TradingEngine(default_config)
+            for _ in range(5):
+                _global_engine.run_cycle_all_assets()
+            data = _global_engine.get_telemetry()
+            data["ok"] = True
             body = json.dumps(data).encode("utf-8")
             self._set_headers(content_type="application/json", length=len(body))
             self.wfile.write(body)
@@ -138,6 +188,8 @@ def wsgi_app(environ, start_response):
     """
     raw_path = environ.get("PATH_INFO", "/").lower()
     method = environ.get("REQUEST_METHOD", "GET").upper()
+    query_str = environ.get("QUERY_STRING", "")
+    query = parse_qs(query_str)
     engine = get_global_engine()
 
     if method == "OPTIONS":
@@ -148,34 +200,14 @@ def wsgi_app(environ, start_response):
         ])
         return [b""]
 
-    if method == "GET":
+    if method in ("GET", "POST"):
         if "favicon.ico" in raw_path:
             start_response("204 No Content", [("Content-Length", "0")])
             return [b""]
             
         elif "status" in raw_path:
-            data = engine.get_telemetry()
-            body = json.dumps(data).encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "application/json"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
-            
-        else:
-            # Default for all page visits: serve HTML dashboard
-            body = get_dashboard_html().encode("utf-8")
-            start_response("200 OK", [
-                ("Content-Type", "text/html; charset=utf-8"),
-                ("Content-Length", str(len(body))),
-                ("Access-Control-Allow-Origin", "*")
-            ])
-            return [body]
-
-    elif method == "POST":
-        if "step" in raw_path:
-            for _ in range(5):
+            tick = query.get("tick", ["1"])[0]
+            if tick != "0":
                 engine.run_cycle_all_assets()
             data = engine.get_telemetry()
             body = json.dumps(data).encode("utf-8")
@@ -185,9 +217,15 @@ def wsgi_app(environ, start_response):
                 ("Access-Control-Allow-Origin", "*")
             ])
             return [body]
-            
+
         elif "backtest" in raw_path:
-            report = engine.run_backtest(n_bars=200)
+            bars_param = query.get("bars", ["200"])[0]
+            try:
+                n_bars = max(30, min(500, int(bars_param)))
+            except ValueError:
+                n_bars = 200
+            report = engine.run_backtest(n_bars=n_bars)
+            report["ok"] = True
             body = json.dumps(report).encode("utf-8")
             start_response("200 OK", [
                 ("Content-Type", "application/json"),
@@ -195,12 +233,40 @@ def wsgi_app(environ, start_response):
                 ("Access-Control-Allow-Origin", "*")
             ])
             return [body]
-            
-        else:
+
+        elif "step" in raw_path:
+            for _ in range(5):
+                engine.run_cycle_all_assets()
             data = engine.get_telemetry()
+            data["ok"] = True
             body = json.dumps(data).encode("utf-8")
             start_response("200 OK", [
                 ("Content-Type", "application/json"),
+                ("Content-Length", str(len(body))),
+                ("Access-Control-Allow-Origin", "*")
+            ])
+            return [body]
+
+        elif "reset" in raw_path:
+            global _global_engine
+            _global_engine = TradingEngine(default_config)
+            for _ in range(5):
+                _global_engine.run_cycle_all_assets()
+            data = _global_engine.get_telemetry()
+            data["ok"] = True
+            body = json.dumps(data).encode("utf-8")
+            start_response("200 OK", [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(body))),
+                ("Access-Control-Allow-Origin", "*")
+            ])
+            return [body]
+
+        elif method == "GET":
+            # Default for all page visits: serve HTML dashboard
+            body = get_dashboard_html().encode("utf-8")
+            start_response("200 OK", [
+                ("Content-Type", "text/html; charset=utf-8"),
                 ("Content-Length", str(len(body))),
                 ("Access-Control-Allow-Origin", "*")
             ])

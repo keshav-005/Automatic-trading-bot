@@ -15,8 +15,7 @@ import math
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
-import numpy as np
-import pandas as pd
+from core.compat import np, pd
 
 class MarketDataFeed:
     """

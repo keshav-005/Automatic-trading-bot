@@ -61,6 +61,18 @@
       font-family: monospace;
     }
 
+    .status-live {
+      background: #064e3b;
+      border-color: #059669;
+      color: #4ade80;
+    }
+
+    .status-paused {
+      background: #3b2a12;
+      border-color: #b45309;
+      color: #f59e0b;
+    }
+
     button {
       background: #1e293b;
       color: #f1f5f9;
@@ -279,9 +291,11 @@
       <p>Multi-Strategy Backtesting & Paper Trading Engine | CSE Capstone Project</p>
     </div>
     <div class="header-controls">
-      <span class="status-tag">Broker: Paper Trading (Local)</span>
-      <button id="btn-step" title="Advance simulation by 5 bars">Step 5 Cycles</button>
+      <span id="live-indicator" class="status-tag status-live">● Live (1 bar / 1.5s)</span>
+      <button id="btn-toggle-pause" title="Pause or resume auto-simulation">Pause</button>
+      <button id="btn-step" title="Advance simulation by 5 bars">+5 Bars</button>
       <button id="btn-backtest" class="btn-blue" title="Run backtest on historical data">Run Backtest</button>
+      <button id="btn-reset" title="Reset simulation state to initial balance">Reset</button>
     </div>
   </div>
 
@@ -486,11 +500,21 @@
       }
     }
 
+    let isPaused = false;
+    let isPolling = false;
+
     async function refreshDashboard() {
+      if (isPolling) return;
+      isPolling = true;
       try {
-        const res = await fetch('/api/status');
-        if (!res.ok) return;
+        const tickParam = isPaused ? '0' : '1';
+        const res = await fetch(`/api/status?tick=${tickParam}`);
+        if (!res.ok) {
+          console.warn('Status poll HTTP status:', res.status);
+          return;
+        }
         const data = await res.json();
+        if (!data || data.error) return;
 
         // 1. Metric Cards
         document.getElementById('stat-equity').textContent = '$' + data.equity.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
@@ -604,13 +628,56 @@
 
       } catch (e) {
         console.error('Error fetching dashboard status:', e);
+      } finally {
+        isPolling = false;
       }
     }
 
     // Button interactions
+    document.getElementById('btn-toggle-pause').addEventListener('click', () => {
+      isPaused = !isPaused;
+      const btn = document.getElementById('btn-toggle-pause');
+      const tag = document.getElementById('live-indicator');
+      if (isPaused) {
+        btn.textContent = 'Resume';
+        tag.textContent = '⏸ Simulation Paused';
+        tag.className = 'status-tag status-paused';
+      } else {
+        btn.textContent = 'Pause';
+        tag.textContent = '● Live (1 bar / 1.5s)';
+        tag.className = 'status-tag status-live';
+        refreshDashboard();
+      }
+    });
+
     document.getElementById('btn-step').addEventListener('click', async () => {
-      await fetch('/api/step', { method: 'POST' });
-      refreshDashboard();
+      const btn = document.getElementById('btn-step');
+      btn.disabled = true;
+      btn.textContent = '+5 Bars...';
+      try {
+        await fetch('/api/step', { method: 'POST' });
+        await refreshDashboard();
+      } catch (err) {
+        console.error('Step request error:', err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '+5 Bars';
+      }
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', async () => {
+      if (!confirm('Reset simulation balance and trade history back to initial state?')) return;
+      const btn = document.getElementById('btn-reset');
+      btn.disabled = true;
+      try {
+        await fetch('/api/reset', { method: 'POST' });
+        equityPoints = [10000];
+        await refreshDashboard();
+      } catch (err) {
+        console.error('Reset error:', err);
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     document.getElementById('btn-backtest').addEventListener('click', async () => {
@@ -619,11 +686,27 @@
       btn.textContent = 'Simulating...';
       try {
         const res = await fetch('/api/backtest', { method: 'POST' });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+        }
         const rep = await res.json();
-        alert(`Backtest Finished!\n\nTrades: ${rep.total_trades}\nWin Rate: ${rep.win_rate_pct}%\nSharpe Ratio: ${rep.sharpe_ratio}\nMax Drawdown: ${rep.max_drawdown_pct}%\nNet PnL: $${rep.net_pnl}`);
-        refreshDashboard();
+        if (!rep.ok && rep.error) {
+          throw new Error(rep.error);
+        }
+        const netPnlStr = (rep.net_pnl >= 0 ? '+$' : '-$') + Math.abs(rep.net_pnl).toFixed(2);
+        alert(
+          'Quantitative Backtest Finished (200 Bars Across 8 Instruments):\n\n' +
+          '• Total Trades: ' + rep.total_trades + '\n' +
+          '• Win Rate: ' + rep.win_rate_pct + '%\n' +
+          '• Profit Factor: ' + rep.profit_factor + '\n' +
+          '• Sharpe Ratio: ' + rep.sharpe_ratio + '\n' +
+          '• Max Drawdown: ' + rep.max_drawdown_pct + '%\n' +
+          '• Realized Net PnL: ' + netPnlStr
+        );
+        await refreshDashboard();
       } catch (err) {
-        alert('Backtest failed: ' + err);
+        alert('Backtest Notice: ' + err.message);
       } finally {
         btn.disabled = false;
         btn.textContent = 'Run Backtest';

@@ -16,8 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
-import pandas as pd
-import numpy as np
+from core.compat import np, pd
 
 from strategies.indicators import (
     calculate_ema, calculate_rsi, calculate_macd,
